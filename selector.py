@@ -175,7 +175,7 @@ def main() -> None:
                 for n in selected
                 if (n in strong and tests_by_num[n]["seconds"] < 1.0)
                 or (n in exact_hits and tests_by_num[n]["seconds"] >= 1.0)
-                or tests_by_num[n]["seconds"] < 0.01
+                or tests_by_num[n]["seconds"] < 0.05
             }
             if len(selected) > 35:
                 selected = {n for n in selected if tests_by_num[n]["seconds"] < 1.0}
