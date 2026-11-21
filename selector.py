@@ -82,7 +82,9 @@ def prune_candidates(
     protected_tests: set[int],
     tests_by_num: dict[int, dict],
     attr_slow_cap: float = 0.5,
-    non_protected_slow_cap: float = 3.0,
+    non_protected_slow_cap: float = 2.0,
+    large_set_threshold: int = 25,
+    large_set_slow_cap: float = 0.2,
 ) -> set[int]:
     if cid == "3utz":
         return selected
@@ -94,10 +96,19 @@ def prune_candidates(
             (n in exact_hits)
             or (n in strong and not (n in attr_slow and tests_by_num[n]["seconds"] >= attr_slow_cap))
             or (tests_by_num[n]["seconds"] < 0.01)
-        ) and not (
-            n not in protected_tests and tests_by_num[n]["seconds"] > non_protected_slow_cap
         )
+        and not (n not in protected_tests and tests_by_num[n]["seconds"] > non_protected_slow_cap)
     }
+
+    if len(kept) >= large_set_threshold:
+        kept = {
+            n for n in kept
+            if (
+                (n in exact_hits)
+                or (n not in protected_tests and tests_by_num[n]["seconds"] <= large_set_slow_cap)
+                or (n in protected_tests and tests_by_num[n]["seconds"] <= non_protected_slow_cap)
+            )
+        }
 
     if len(kept) > 100:
         kept = {
@@ -106,9 +117,8 @@ def prune_candidates(
                 (n in exact_hits)
                 or (n in strong and not (n in attr_slow and tests_by_num[n]["seconds"] >= attr_slow_cap))
                 or (tests_by_num[n]["seconds"] < 0.002)
-            ) and not (
-                n not in protected_tests and tests_by_num[n]["seconds"] > non_protected_slow_cap
             )
+            and not (n not in protected_tests and tests_by_num[n]["seconds"] > non_protected_slow_cap)
         }
 
     return kept if kept else (protected or selected)
