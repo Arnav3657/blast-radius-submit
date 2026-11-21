@@ -85,6 +85,7 @@ def main() -> None:
     fixtures = cov["fixtures"]
     funcs_map = cov.get("funcs", {})
     attrs_map = cov.get("attrs", {})
+    attr_spans = cov.get("attr_spans", {})
 
     for patch_path in sorted((DATA / "commits").glob("*.patch")):
         diff_info = parse_patch(patch_path.read_text(encoding="utf-8", errors="ignore"))
@@ -94,6 +95,11 @@ def main() -> None:
             if info["comment_only"] and path.endswith(".py"):
                 continue
 
+            for ln in info["lines"]:
+                for s_ln, e_ln, aname in attr_spans.get(path, ()):
+                    if s_ln <= ln <= e_ln:
+                        at = attrs_map.get(aname, ())
+                        selected.update(at if len(at) <= 100 else (set(at) & set(file_tests.get(path, ()))))
             for a in info["attrs"]:
                 selected.update(attrs_map.get(a, ()))
             if path == "sqlglot/serde.py":
@@ -111,11 +117,9 @@ def main() -> None:
 
                 for ln in info["lines"]:
                     # Find tightest enclosing function
-                    enclosing = [t_ids for s, e, t_ids in f_funcs if s <= ln <= e]
+                    enclosing = [(e - s, t_ids) for s, e, t_ids in f_funcs if s <= ln <= e]
                     if enclosing:
-                        # Smallest enclosing function (last or min span)
-                        for t_ids in enclosing:
-                            hit.update(t_ids)
+                        hit.update(min(enclosing, key=lambda x: x[0])[1])
                     else:
                         touched_top_level = True
                     for delta in (-1, 0, 1):
