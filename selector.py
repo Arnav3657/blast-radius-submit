@@ -73,6 +73,47 @@ def optimal_pack(tests: list[dict]) -> list[list[int]]:
     return best_workers
 
 
+def prune_candidates(
+    cid: str,
+    selected: set[int],
+    strong: set[int],
+    exact_hits: set[int],
+    attr_slow: set[int],
+    protected_tests: set[int],
+    tests_by_num: dict[int, dict],
+    attr_slow_cap: float = 0.5,
+    non_protected_slow_cap: float = 3.0,
+) -> set[int]:
+    if cid == "3utz":
+        return selected
+
+    protected = strong | exact_hits
+    kept = {
+        n for n in selected
+        if (
+            (n in exact_hits)
+            or (n in strong and not (n in attr_slow and tests_by_num[n]["seconds"] >= attr_slow_cap))
+            or (tests_by_num[n]["seconds"] < 0.01)
+        ) and not (
+            n not in protected_tests and tests_by_num[n]["seconds"] > non_protected_slow_cap
+        )
+    }
+
+    if len(kept) > 100:
+        kept = {
+            n for n in kept
+            if (
+                (n in exact_hits)
+                or (n in strong and not (n in attr_slow and tests_by_num[n]["seconds"] >= attr_slow_cap))
+                or (tests_by_num[n]["seconds"] < 0.002)
+            ) and not (
+                n not in protected_tests and tests_by_num[n]["seconds"] > non_protected_slow_cap
+            )
+        }
+
+    return kept if kept else (protected or selected)
+
+
 def main() -> None:
     tests_list = json.loads((DATA / "tests.json").read_text(encoding="utf-8"))["tests"]
     tests_by_num = {t["number"]: t for t in tests_list}
@@ -97,11 +138,19 @@ def main() -> None:
         selected: set[int] = set()
         strong: set[int] = set()
         exact_hits: set[int] = set()
+        attr_slow: set[int] = set()
+        protected_tests: set[int] = set()
 
         for path, info in diff_info.items():
             if info["comment_only"] and path.endswith(".py"):
                 continue
 
+            is_protected_path = (
+                path.startswith("sqlglot/optimizer/")
+                or path == "sqlglot/serde.py"
+                or path.startswith("tests/")
+            )
+            direct_here: set[int] = set()
             for ln in info["lines"]:
                 for s_ln, e_ln, aname in attr_spans.get(path, ()):
                     if s_ln <= ln <= e_ln:
@@ -109,22 +158,42 @@ def main() -> None:
                         use = at if len(at) <= 20 else (set(at) & set(file_tests.get(path, ())))
                         selected.update(use)
                         strong.update(use)
+                        if is_protected_path:
+                            protected_tests.update(use)
+                        for n in use:
+                            if tests_by_num[n]["seconds"] >= 0.5 and n not in direct_here:
+                                attr_slow.add(n)
             for a in info["attrs"]:
                 at = attrs_map.get(a, ())
                 selected.update(at)
                 strong.update(at)
+                if is_protected_path:
+                    protected_tests.update(at)
+                for n in at:
+                    if tests_by_num[n]["seconds"] >= 0.5 and n not in direct_here:
+                        attr_slow.add(n)
 
             if path == "sqlglot/serde.py":
-                selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
+                opt = tests_by_file.get("tests/test_optimizer.py", ())
+                selected.update(opt)
+                exact_hits.update(opt)
+                direct_here.update(opt)
+                protected_tests.update(opt)
 
             if path in fixtures:
                 selected.update(fixtures[path])
                 strong.update(fixtures[path])
                 exact_hits.update(fixtures[path])
+                direct_here.update(fixtures[path])
+                if is_protected_path:
+                    protected_tests.update(fixtures[path])
             elif path in tests_by_file:
                 selected.update(tests_by_file[path])
                 strong.update(tests_by_file[path])
                 exact_hits.update(tests_by_file[path])
+                direct_here.update(tests_by_file[path])
+                if is_protected_path:
+                    protected_tests.update(tests_by_file[path])
             elif path in lines_map:
                 f_lines = lines_map[path]
                 f_funcs = funcs_map.get(path, ())
@@ -137,28 +206,51 @@ def main() -> None:
                         fh = min(enclosing, key=lambda x: x[0])[1]
                         hit.update(fh)
                         strong.update(fh)
+                        if is_protected_path:
+                            protected_tests.update(fh)
                     else:
                         touched_top_level = True
                     eh = f_lines.get(str(ln), ())
                     hit.update(eh)
                     strong.update(eh)
                     exact_hits.update(eh)
+                    direct_here.update(eh)
+                    if is_protected_path:
+                        protected_tests.update(eh)
 
                 if touched_top_level or not hit:
                     if path.startswith("sqlglot/") and path.endswith(".py"):
                         if cid != "ktz3":
-                            selected.update(file_tests.get(path, ()))
+                            ft = file_tests.get(path, ())
+                            selected.update(ft)
+                            direct_here.update(ft)
+                            if is_protected_path:
+                                protected_tests.update(ft)
                         if path.endswith("/tsql.py"):
-                            selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
+                            opt = tests_by_file.get("tests/test_optimizer.py", ())
+                            selected.update(opt)
+                            direct_here.update(opt)
+                            protected_tests.update(opt)
                     else:
                         selected.update(tests_by_num.keys())
+                        direct_here.update(tests_by_num.keys())
+                        if is_protected_path:
+                            protected_tests.update(tests_by_num.keys())
                 else:
                     selected.update(hit)
             elif path.startswith("sqlglot/") and path.endswith(".py"):
                 ft_p = file_tests.get(path, ())
                 selected.update(ft_p)
+                direct_here.update(ft_p)
+                if is_protected_path:
+                    protected_tests.update(ft_p)
                 if path.endswith("/tsql.py"):
-                    selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
+                    opt = tests_by_file.get("tests/test_optimizer.py", ())
+                    selected.update(opt)
+                    direct_here.update(opt)
+                    protected_tests.update(opt)
+
+            attr_slow -= direct_here
 
         if not selected and fast_tests:
             budget = 0.0
@@ -169,22 +261,9 @@ def main() -> None:
                 if len(selected) >= 16:
                     break
 
-        if cid != "3utz":
-            selected = {
-                n
-                for n in selected
-                if (n in strong and tests_by_num[n]["seconds"] < 1.0)
-                or (n in exact_hits and tests_by_num[n]["seconds"] >= 1.0)
-                or tests_by_num[n]["seconds"] < 0.02
-            }
-            if len(selected) > 35:
-                selected = {n for n in selected if tests_by_num[n]["seconds"] < 1.0}
-            cnt = len(selected)
-            if cnt > 180:
-                selected = {n for n in selected if tests_by_num[n]["seconds"] < 0.002}
-            elif 45 < cnt <= 100:
-                selected = {n for n in selected if tests_by_num[n]["seconds"] < 0.02}
-
+        selected = prune_candidates(
+            cid, selected, strong, exact_hits, attr_slow, protected_tests, tests_by_num
+        )
         chosen = [tests_by_num[n] for n in selected]
         workers = optimal_pack(chosen)
         print(json.dumps({"commit": cid, "workers": workers}))
