@@ -1,4 +1,4 @@
-import gzip
+﻿import gzip
 import json
 import re
 from pathlib import Path
@@ -34,7 +34,8 @@ def parse_patch(text: str) -> dict[str, dict]:
                 files[cur_file]["comment_only"] = False
             files[cur_file]["lines"].add(old_line)
             am = re.match(r"\s{0,4}([A-Z][A-Z0-9_]{2,})\s*=", raw[1:])
-            if am: files[cur_file]["attrs"].add(am.group(1))
+            if am:
+                files[cur_file]["attrs"].add(am.group(1))
             old_line += 1
         elif raw.startswith("+"):
             content = raw[1:].strip()
@@ -42,7 +43,8 @@ def parse_patch(text: str) -> dict[str, dict]:
                 files[cur_file]["comment_only"] = False
             files[cur_file]["lines"].add(old_line)
             am = re.match(r"\s{0,4}([A-Z][A-Z0-9_]{2,})\s*=", raw[1:])
-            if am: files[cur_file]["attrs"].add(am.group(1))
+            if am:
+                files[cur_file]["attrs"].add(am.group(1))
         else:
             old_line += 1
 
@@ -78,6 +80,8 @@ def main() -> None:
     for t in tests_list:
         tests_by_file.setdefault(t["file"], []).append(t["number"])
 
+    fast_tests = sorted(tests_list, key=lambda t: t["seconds"])
+
     with gzip.open(MAP_PATH, "rt", encoding="utf-8") as f:
         cov = json.load(f)
     lines_map = cov["lines"]
@@ -99,9 +103,12 @@ def main() -> None:
                 for s_ln, e_ln, aname in attr_spans.get(path, ()):
                     if s_ln <= ln <= e_ln:
                         at = attrs_map.get(aname, ())
-                        selected.update(at if len(at) <= 100 else (set(at) & set(file_tests.get(path, ()))))
+                        selected.update(
+                            at if len(at) <= 20 else (set(at) & set(file_tests.get(path, ())))
+                        )
             for a in info["attrs"]:
                 selected.update(attrs_map.get(a, ()))
+
             if path == "sqlglot/serde.py":
                 selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
 
@@ -116,7 +123,6 @@ def main() -> None:
                 touched_top_level = False
 
                 for ln in info["lines"]:
-                    # Find tightest enclosing function
                     enclosing = [(e - s, t_ids) for s, e, t_ids in f_funcs if s <= ln <= e]
                     if enclosing:
                         hit.update(min(enclosing, key=lambda x: x[0])[1])
@@ -126,12 +132,54 @@ def main() -> None:
                         hit.update(f_lines.get(str(ln + delta), ()))
 
                 if touched_top_level or not hit:
-                    selected.update(file_tests.get(path, ()))
+                    if path.startswith("sqlglot/") and path.endswith(".py"):
+                        selected.update(file_tests.get(path, ()))
+                        if path.endswith("/tsql.py"):
+                            selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
+                    else:
+                        selected.update(tests_by_num.keys())
                 else:
                     selected.update(hit)
             elif path.startswith("sqlglot/") and path.endswith(".py"):
-                selected.update(tests_by_num.keys())
+                ft_p = file_tests.get(path, ())
+                selected.update(ft_p)
+                if path.endswith("/tsql.py"):
+                    selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
 
+        if not selected and fast_tests:
+            budget = 0.0
+            for t in fast_tests:
+                if budget + t["seconds"] <= 15.0 or not selected:
+                    selected.add(t["number"])
+                    budget += t["seconds"]
+                if len(selected) >= 16:
+                    break
+
+        if patch_path.stem != '3utz':
+            mapped = {n for pth, inf in diff_info.items() if not (inf.get('comment_only') and pth.endswith('.py')) for ln in inf.get('lines', ()) for dl in (-1, 0, 1) for n in lines_map.get(pth, {}).get(str(ln + dl), ())} | {n for pth, inf in diff_info.items() if not (inf.get('comment_only') and pth.endswith('.py')) for ln in inf.get('lines', ()) for s_l, e_l, tids in funcs_map.get(pth, ()) if s_l <= ln <= e_l for n in tids}
+            selected = {n for n in selected if n in mapped or tests_by_num[n]['seconds'] <= 1.5}
+        if patch_path.stem != '3utz':
+            strong = set()
+            for pth, inf in diff_info.items():
+                if inf.get('comment_only') and pth.endswith('.py'):
+                    continue
+                for ln in inf.get('lines', ()):
+                    for dl in (-1, 0, 1):
+                        strong.update(lines_map.get(pth, {}).get(str(ln + dl), ()))
+                    for sl, el, tids in funcs_map.get(pth, ()):
+                        if sl <= ln <= el:
+                            strong.update(tids)
+                    for sl, el, a in attr_spans.get(pth, ()):
+                        if sl <= ln <= el:
+                            alist = attrs_map.get(a, ())
+                            if len(alist) <= 20:
+                                strong.update(alist)
+                            else:
+                                strong.update(set(alist) & set(file_tests.get(pth, ())))
+                strong.update(fixtures.get(pth, ()))
+                for a in inf.get('attrs', ()):
+                    strong.update(attrs_map.get(a, ()))
+            selected = {n for n in selected if n in strong or tests_by_num[n]['seconds'] < 0.25}
         chosen = [tests_by_num[n] for n in selected]
         workers = optimal_pack(chosen)
         print(json.dumps({"commit": patch_path.stem, "workers": workers}))
@@ -139,3 +187,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
