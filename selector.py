@@ -175,13 +175,13 @@ def main() -> None:
                 for n in selected
                 if (n in strong and tests_by_num[n]["seconds"] < 1.0)
                 or (n in exact_hits and tests_by_num[n]["seconds"] >= 1.0)
-                or tests_by_num[n]["seconds"] < 0.05
+                or tests_by_num[n]["seconds"] < 0.02
             }
             if len(selected) > 35:
                 selected = {n for n in selected if tests_by_num[n]["seconds"] < 1.0}
             cnt = len(selected)
             if cnt > 180:
-                selected = {n for n in selected if tests_by_num[n]["seconds"] < 0.001}
+                selected = {n for n in selected if tests_by_num[n]["seconds"] < 0.002}
             elif 45 < cnt <= 100:
                 selected = {n for n in selected if tests_by_num[n]["seconds"] < 0.02}
 
