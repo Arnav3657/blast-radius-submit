@@ -85,6 +85,8 @@ def prune_candidates(
     non_protected_slow_cap: float = 2.0,
     large_set_threshold: int = 25,
     large_set_slow_cap: float = 0.2,
+    huge_set_threshold: int = 150,
+    huge_set_slow_cap: float = 0.01,
 ) -> set[int]:
     if cid == "3utz":
         return selected
@@ -108,6 +110,12 @@ def prune_candidates(
                 or (n not in protected_tests and tests_by_num[n]["seconds"] <= large_set_slow_cap)
                 or (n in protected_tests and tests_by_num[n]["seconds"] <= non_protected_slow_cap)
             )
+        }
+
+    if len(kept) >= huge_set_threshold:
+        kept = {
+            n for n in kept
+            if (n in exact_hits) or (tests_by_num[n]["seconds"] <= huge_set_slow_cap)
         }
 
     if len(kept) > 100:
