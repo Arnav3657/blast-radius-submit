@@ -170,9 +170,17 @@ def main() -> None:
             and (path not in tests_by_file)
             for path in diff_info
         )
-        if unmapped_non_doc:
+        # Also trigger fallback if any touched non-doc file has empty map data in cov_map
+        empty_map_non_doc = any(
+            (not path.endswith((".md", ".rst", ".txt")))
+            and (path not in fixtures)
+            and (path not in tests_by_file)
+            and not (lines_map.get(path) or funcs_map.get(path) or file_tests.get(path))
+            for path in diff_info
+        )
+        if unmapped_non_doc or empty_map_non_doc:
             for t in tests_list:
-                if t["seconds"] <= 0.25:
+                if t["seconds"] <= 0.5:
                     selected.add(t["number"])
 
         if not selected and fast_tests:
@@ -186,15 +194,10 @@ def main() -> None:
 
         if cid != "3utz":
             protected = exact_hits | strong
-            if len(selected) > 180:
+            if len(selected) > 250:
                 selected = {
                     n for n in selected
-                    if (n in protected) or (tests_by_num[n]["seconds"] <= 0.05)
-                }
-            elif len(selected) > 80:
-                selected = {
-                    n for n in selected
-                    if (n in protected) or (tests_by_num[n]["seconds"] <= 0.15)
+                    if (n in protected) or (tests_by_num[n]["seconds"] <= 0.5)
                 }
 
         chosen = [tests_by_num[n] for n in selected]
