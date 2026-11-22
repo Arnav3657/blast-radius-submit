@@ -27,13 +27,16 @@ UNMAPPED_CAP = 0.0  # disabled (set >0 to enable)
 #   "none"  -> no pruning at all (slow, but if the miss disappears, pruning caused it)
 #   "light" -> only drop non-protected tests slower than 2 s
 #   "full"  -> original pruning
-PRUNE_MODE = "light"
+PRUNE_MODE = "v2"
 
-# Widening rules (for the case where the miss is a selection gap, not pruning):
-WIDEN = True
-WIDEN_FILE_CAP = 0.3      # add every test that touches a changed sqlglot file if it takes <= this many seconds
-WIDEN_SIBLING_CAP = 1.0   # add tests from tests/**/test_<module>.py (e.g. dialects/foo.py -> test_foo.py) <= this
-WIDEN_NEIGHBOR = 3        # also take coverage hits from +-N lines around each changed line
+# v2 pruning: never drop a test just because it is slow if the map links it to the change.
+#  - keep every exact-hit test
+#  - keep every function-level ("strong") test <= STRONG_FAST_CAP seconds, and any test < 0.01 s
+#  - slow strong tests (> STRONG_FAST_CAP) are kept cheapest-first until SLOW_BUDGET seconds are spent
+#  - tests linked only by file/attr (not strong/exact) and slower than 0.2 s are dropped
+STRONG_FAST_CAP = 0.2
+SLOW_BUDGET = 60.0
+WEAK_CAP = 0.2
 
 # Patches touching only these prose files can't affect tests.
 PROSE_EXT = (".md", ".rst", ".txt")
@@ -383,21 +386,6 @@ def main() -> None:
                     direct_here.update(opt)
                     protected_tests.update(opt)
 
-            if WIDEN and path.startswith("sqlglot/") and path.endswith(".py"):
-                for n in file_tests.get(path, ()):
-                    if tests_by_num[n]["seconds"] <= WIDEN_FILE_CAP:
-                        selected.add(n)
-                f_lines_w = lines_map.get(path, {})
-                for ln in info["lines"]:
-                    for d in range(-WIDEN_NEIGHBOR, WIDEN_NEIGHBOR + 1):
-                        selected.update(f_lines_w.get(str(ln + d), ()))
-                stem = Path(path).stem
-                for tf, nums in tests_by_file.items():
-                    if Path(tf).stem == "test_" + stem:
-                        for n in nums:
-                            if tests_by_num[n]["seconds"] <= WIDEN_SIBLING_CAP:
-                                selected.add(n)
-
             attr_slow -= direct_here
             if len(selected) == before_sel and not path.lower().endswith(PROSE_EXT):
                 unmapped = True
@@ -419,6 +407,26 @@ def main() -> None:
         pre_prune = set(selected)
         if PRUNE_MODE == "none":
             pass
+        elif PRUNE_MODE == "v2":
+            kept = set()
+            slow_strong = []
+            for n in selected:
+                sec = tests_by_num[n]["seconds"]
+                if n in exact_hits or sec < 0.01:
+                    kept.add(n)
+                elif n in strong:
+                    if sec <= STRONG_FAST_CAP:
+                        kept.add(n)
+                    else:
+                        slow_strong.append((sec, n))
+                elif sec <= WEAK_CAP:
+                    kept.add(n)
+            spent = 0.0
+            for sec, n in sorted(slow_strong):
+                if spent + sec <= SLOW_BUDGET:
+                    kept.add(n)
+                    spent += sec
+            selected = kept or selected
         elif PRUNE_MODE == "light":
             kept = {
                 n for n in selected
