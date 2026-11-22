@@ -19,9 +19,21 @@ EMPTY_FOR_COMMENT_ONLY = False
 
 # Safety margins (a miss costs 300 s, so a little extra runtime is cheap insurance).
 # Tests this fast are always re-added after pruning.
-SAFETY_CAP = 0.05
+SAFETY_CAP = 0.0  # disabled: cost ~10 s on practice and did not fix the miss
 # When a non-prose change maps to nothing (config, conftest, unknown file), run all tests this fast.
-UNMAPPED_CAP = 0.1
+UNMAPPED_CAP = 0.0  # disabled (set >0 to enable)
+
+# Diagnostic switch for finding the missed commit on the server:
+#   "none"  -> no pruning at all (slow, but if the miss disappears, pruning caused it)
+#   "light" -> only drop non-protected tests slower than 2 s
+#   "full"  -> original pruning
+PRUNE_MODE = "light"
+
+# Widening rules (for the case where the miss is a selection gap, not pruning):
+WIDEN = True
+WIDEN_FILE_CAP = 0.3      # add every test that touches a changed sqlglot file if it takes <= this many seconds
+WIDEN_SIBLING_CAP = 1.0   # add tests from tests/**/test_<module>.py (e.g. dialects/foo.py -> test_foo.py) <= this
+WIDEN_NEIGHBOR = 3        # also take coverage hits from +-N lines around each changed line
 
 # Patches touching only these prose files can't affect tests.
 PROSE_EXT = (".md", ".rst", ".txt")
@@ -371,11 +383,26 @@ def main() -> None:
                     direct_here.update(opt)
                     protected_tests.update(opt)
 
+            if WIDEN and path.startswith("sqlglot/") and path.endswith(".py"):
+                for n in file_tests.get(path, ()):
+                    if tests_by_num[n]["seconds"] <= WIDEN_FILE_CAP:
+                        selected.add(n)
+                f_lines_w = lines_map.get(path, {})
+                for ln in info["lines"]:
+                    for d in range(-WIDEN_NEIGHBOR, WIDEN_NEIGHBOR + 1):
+                        selected.update(f_lines_w.get(str(ln + d), ()))
+                stem = Path(path).stem
+                for tf, nums in tests_by_file.items():
+                    if Path(tf).stem == "test_" + stem:
+                        for n in nums:
+                            if tests_by_num[n]["seconds"] <= WIDEN_SIBLING_CAP:
+                                selected.add(n)
+
             attr_slow -= direct_here
             if len(selected) == before_sel and not path.lower().endswith(PROSE_EXT):
                 unmapped = True
 
-        if unmapped:
+        if unmapped and UNMAPPED_CAP > 0:
             broad = {t["number"] for t in tests_list if t["seconds"] <= UNMAPPED_CAP}
             selected.update(broad)
             exact_hits.update(broad)
@@ -390,10 +417,20 @@ def main() -> None:
                     break
 
         pre_prune = set(selected)
-        selected = prune_candidates(
-            selected, strong, exact_hits, attr_slow, protected_tests, tests_by_num
-        )
-        selected |= {n for n in pre_prune if tests_by_num[n]["seconds"] <= SAFETY_CAP}
+        if PRUNE_MODE == "none":
+            pass
+        elif PRUNE_MODE == "light":
+            kept = {
+                n for n in selected
+                if not (n not in protected_tests and tests_by_num[n]["seconds"] > 2.0)
+            }
+            selected = kept or selected
+        else:
+            selected = prune_candidates(
+                selected, strong, exact_hits, attr_slow, protected_tests, tests_by_num
+            )
+        if SAFETY_CAP > 0:
+            selected |= {n for n in pre_prune if tests_by_num[n]["seconds"] <= SAFETY_CAP}
         chosen = [tests_by_num[n] for n in selected]
         workers = optimal_pack(chosen)
         out.append(json.dumps({"commit": cid, "workers": workers}))
