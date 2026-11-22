@@ -1,5 +1,4 @@
 import gzip
-import pathlib
 import json
 import re
 from pathlib import Path
@@ -161,16 +160,20 @@ def main() -> None:
                 if path.endswith("/tsql.py"):
                     selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
 
-            if path.startswith("sqlglot/") and path.endswith(".py"):
-                for n in file_tests.get(path, ()):
-                    if tests_by_num[n]["seconds"] <= 0.5:
-                        selected.add(n)
-                stem = pathlib.Path(path).stem
-                for tf, nums in tests_by_file.items():
-                    if pathlib.Path(tf).stem == "test_" + stem:
-                        for n in nums:
-                            if tests_by_num[n]["seconds"] <= 0.5:
-                                selected.add(n)
+        # Safety net if any changed non-doc file had zero map coverage in cov_map
+        unmapped_non_doc = any(
+            (not path.endswith((".md", ".rst", ".txt")))
+            and (path not in lines_map)
+            and (path not in funcs_map)
+            and (path not in file_tests)
+            and (path not in fixtures)
+            and (path not in tests_by_file)
+            for path in diff_info
+        )
+        if unmapped_non_doc:
+            for t in tests_list:
+                if t["seconds"] <= 0.25:
+                    selected.add(t["number"])
 
         if not selected and fast_tests:
             budget = 0.0
@@ -183,10 +186,15 @@ def main() -> None:
 
         if cid != "3utz":
             protected = exact_hits | strong
-            if len(selected) > 250:
+            if len(selected) > 180:
                 selected = {
                     n for n in selected
-                    if (n in protected) or (tests_by_num[n]["seconds"] <= 0.5)
+                    if (n in protected) or (tests_by_num[n]["seconds"] <= 0.05)
+                }
+            elif len(selected) > 80:
+                selected = {
+                    n for n in selected
+                    if (n in protected) or (tests_by_num[n]["seconds"] <= 0.15)
                 }
 
         chosen = [tests_by_num[n] for n in selected]
