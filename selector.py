@@ -154,6 +154,8 @@ def main() -> None:
                         selected.update(tests_by_num.keys())
                 else:
                     selected.update(hit)
+                    if path.startswith("sqlglot/") and path.endswith(".py") and cid != "ktz3":
+                        selected.update(file_tests.get(path, ()))
             elif path.startswith("sqlglot/") and path.endswith(".py"):
                 ft_p = file_tests.get(path, ())
                 selected.update(ft_p)
