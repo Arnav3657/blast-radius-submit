@@ -14,6 +14,7 @@ def parse_patch(text: str) -> dict[str, dict]:
     files: dict[str, dict] = {}
     cur_file = None
     old_line = 0
+    new_line = 0
 
     for raw in text.splitlines():
         if raw.startswith("diff --git "):
@@ -27,6 +28,7 @@ def parse_patch(text: str) -> dict[str, dict]:
         m = HUNK_RE.match(raw)
         if m:
             old_line = int(m.group(1))
+            new_line = int(m.group(3))
             continue
         if raw.startswith("-"):
             content = raw[1:].strip()
@@ -41,12 +43,14 @@ def parse_patch(text: str) -> dict[str, dict]:
             content = raw[1:].strip()
             if content and not content.startswith("#"):
                 files[cur_file]["comment_only"] = False
-            files[cur_file]["lines"].add(old_line)
+            files[cur_file]["lines"].add(new_line)
             am = re.match(r"\s{0,4}([A-Z][A-Z0-9_]{2,})\s*=", raw[1:])
             if am:
                 files[cur_file]["attrs"].add(am.group(1))
+            new_line += 1
         else:
             old_line += 1
+            new_line += 1
 
     return files
 
@@ -106,7 +110,7 @@ def main() -> None:
                 for s_ln, e_ln, aname in attr_spans.get(path, ()):
                     if s_ln <= ln <= e_ln:
                         at = attrs_map.get(aname, ())
-                        use = at if len(at) <= 20 else (set(at) & set(file_tests.get(path, ())))
+                        use = at if len(at) <= 50 else (set(at) & set(file_tests.get(path, ())))
                         selected.update(use)
                         strong.update(use)
             for a in info["attrs"]:
@@ -195,7 +199,7 @@ def main() -> None:
         )
         if unmapped_non_doc or empty_map_non_doc:
             for t in tests_list:
-                if t["seconds"] <= 0.5:
+                if t["seconds"] <= 2.0:
                     selected.add(t["number"])
 
         if not selected and fast_tests:
