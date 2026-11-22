@@ -211,13 +211,6 @@ def main() -> None:
                 if len(selected) >= 16:
                     break
 
-        if cid != "3utz":
-            protected = exact_hits | strong
-            if len(selected) > 250:
-                selected = {
-                    n for n in selected
-                    if (n in protected) or (tests_by_num[n]["seconds"] <= 0.5)
-                }
 
         chosen = [tests_by_num[n] for n in selected]
         workers = optimal_pack(chosen)
