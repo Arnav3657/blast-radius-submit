@@ -17,6 +17,12 @@ HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 # Flip to True only after confirming no sample comment-only commit has failing tests.
 EMPTY_FOR_COMMENT_ONLY = False
 
+# Safety margins (a miss costs 300 s, so a little extra runtime is cheap insurance).
+# Tests this fast are always re-added after pruning.
+SAFETY_CAP = 0.05
+# When a non-prose change maps to nothing (config, conftest, unknown file), run all tests this fast.
+UNMAPPED_CAP = 0.1
+
 # Patches touching only these prose files can't affect tests.
 PROSE_EXT = (".md", ".rst", ".txt")
 
@@ -255,9 +261,11 @@ def main() -> None:
         attr_slow: set[int] = set()
         protected_tests: set[int] = set()
 
+        unmapped = False
         for path, info in diff_info.items():
             if info["comment_only"] and path.endswith(".py"):
                 continue
+            before_sel = len(selected)
 
             is_protected_path = (
                 path.startswith("sqlglot/optimizer/")
@@ -364,6 +372,13 @@ def main() -> None:
                     protected_tests.update(opt)
 
             attr_slow -= direct_here
+            if len(selected) == before_sel and not path.lower().endswith(PROSE_EXT):
+                unmapped = True
+
+        if unmapped:
+            broad = {t["number"] for t in tests_list if t["seconds"] <= UNMAPPED_CAP}
+            selected.update(broad)
+            exact_hits.update(broad)
 
         if not selected and fast_tests:
             budget = 0.0
@@ -374,9 +389,11 @@ def main() -> None:
                 if len(selected) >= 16:
                     break
 
+        pre_prune = set(selected)
         selected = prune_candidates(
             selected, strong, exact_hits, attr_slow, protected_tests, tests_by_num
         )
+        selected |= {n for n in pre_prune if tests_by_num[n]["seconds"] <= SAFETY_CAP}
         chosen = [tests_by_num[n] for n in selected]
         workers = optimal_pack(chosen)
         out.append(json.dumps({"commit": cid, "workers": workers}))
