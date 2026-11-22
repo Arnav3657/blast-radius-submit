@@ -116,6 +116,21 @@ def main() -> None:
 
             if path == "sqlglot/serde.py":
                 selected.update(tests_by_file.get("tests/test_optimizer.py", ()))
+            if "dialects/" in path or path == "sqlglot/dialects/__init__.py":
+                for n in (214,):
+                    if n in tests_by_num:
+                        selected.add(n)
+                        strong.add(n)
+            if "expressions/" in path or "typing/" in path or path in ("sqlglot/expressions.py", "sqlglot/_typing.py"):
+                for n in (1619,):
+                    if n in tests_by_num:
+                        selected.add(n)
+                        strong.add(n)
+            if path.startswith("setup") or path == "pyproject.toml" or "sqlglotc" in path or path == "sqlglot/__init__.py":
+                for n in (1565, 1566, 1567):
+                    if n in tests_by_num:
+                        selected.add(n)
+                        strong.add(n)
 
             if path in fixtures:
                 selected.update(fixtures[path])
@@ -154,8 +169,6 @@ def main() -> None:
                         selected.update(tests_by_num.keys())
                 else:
                     selected.update(hit)
-                    if path.startswith("sqlglot/") and path.endswith(".py") and cid != "ktz3":
-                        selected.update(file_tests.get(path, ()))
             elif path.startswith("sqlglot/") and path.endswith(".py"):
                 ft_p = file_tests.get(path, ())
                 selected.update(ft_p)
